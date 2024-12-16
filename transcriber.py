@@ -1,19 +1,17 @@
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor, Wav2Vec2ForCTC
 import torch
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 import librosa
 import yt_dlp
-import textwrap
 
 def get_transcript(url):
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    model = Wav2Vec2ForCTC.from_pretrained(
-        'facebook/wav2vec2-large-robust-ft-libri-960h', 
-        torch_dtype=torch.float16
-    ).to(device)
+    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
-    processor = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-large-robust-ft-libri-960h')  
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        'openai/whisper-large-v3-turbo', torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True
+    )
+    model.to(device)
     
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -27,18 +25,18 @@ def get_transcript(url):
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
-        
-    cc = ''
 
-    input_audio, _ = librosa.load('audio.mp3', sr=16000)
-    input_values = processor(input_audio, return_tensors="pt", padding="longest", sampling_rate=16000).input_values.to(torch.float16).to(device)
-
-    with torch.no_grad():
-        logits = model(input_values).logits
-        predicted_ids = torch.argmax(logits, dim=-1)
-        
-    transcription = processor.batch_decode(predicted_ids)[0]
-    cc += transcription 
-    cc += ' '
+    processor = AutoProcessor.from_pretrained('openai/whisper-large-v3-turbo')
     
-    return cc
+    pipe = pipeline(
+        'automatic-speech-recognition',
+        model=model,
+        tokenizer=processor.tokenizer,
+        feature_extractor=processor.feature_extractor,
+        torch_dtype=torch_dtype,
+        device=device,
+    )
+    
+    result = pipe('audio.mp3', return_timestamps=True)
+
+    return result['text']
